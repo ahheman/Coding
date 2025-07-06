@@ -1,68 +1,126 @@
-SET SERVEROUTPUT ON;
-
 DECLARE
-    v_exists NUMBER := 0;
-    v_rowid  ROWID;
+    -- Input test values
+    v_FIELD_TO_BE_DERIVED   VARCHAR2(100) := 'PRODUCT_FIELD_MAPPING';
+    v_INTERFACE_FILE        VARCHAR2(100) := 'MAJESCO';
+    v_EFFECTIVE_DATE        DATE := TO_DATE('01-JUL-2024', 'DD-MON-YYYY');
 
-    -- To hold all 10 field_map values
-    v_f1 VARCHAR2(100);
-    v_f2 VARCHAR2(100);
-    v_f3 VARCHAR2(100);
-    v_f4 VARCHAR2(100);
-    v_f5 VARCHAR2(100);
-    v_f6 VARCHAR2(100);
-    v_f7 VARCHAR2(100);
-    v_f8 VARCHAR2(100);
-    v_f9 VARCHAR2(100);
-    v_f10 VARCHAR2(100);
+    -- Variables
+    v_field_names   DBMS_SQL.VARCHAR2_TABLE;
+    v_field_values  DBMS_SQL.VARCHAR2_TABLE;
+    v_count         INTEGER := 0;
+    v_val           VARCHAR2(4000);
+    v_sql           CLOB;
+    v_cursor        SYS_REFCURSOR;
+
+    -- Output variables
+    v_field_value_mapping VARCHAR2(4000);
+    v_dynamic_val1 VARCHAR2(4000);
+    v_dynamic_val2 VARCHAR2(4000);
+    v_dynamic_val3 VARCHAR2(4000);
 BEGIN
-    -- Step 1: Check if row even exists with these inputs
-    SELECT COUNT(*) INTO v_exists
-    FROM MAPPING_VALUE
-    WHERE FIELD_TO_BE_DERIVED = 'PRODUCT_FIELD_MAPPING'
-      AND INTERFACE_FILE = 'MAJESCO'
-      AND EFFECTIVE_DATE = TO_DATE('01-JUL-2024', 'DD-MON-YYYY')
-      AND ACTIVE = 'A';
+    DBMS_OUTPUT.PUT_LINE('🔍 Checking FIELD_MAP_X values in MAPPING_VALUE table...');
 
-    IF v_exists = 0 THEN
-        DBMS_OUTPUT.PUT_LINE('❌ No row found in MAPPING_VALUE for given input values.');
+    -- Step 1: Get non-null FIELD_MAP_X columns from MAPPING_VALUE
+    FOR col_rec IN (
+        SELECT column_name
+        FROM user_tab_columns
+        WHERE table_name = 'MAPPING_VALUE'
+          AND column_name LIKE 'FIELD_MAP_%'
+        ORDER BY column_name
+    )
+    LOOP
+        BEGIN
+            -- Build dynamic SQL for each FIELD_MAP_X
+            v_sql := '
+                SELECT ' || col_rec.column_name || '
+                FROM MAPPING_VALUE
+                WHERE FIELD_TO_BE_DERIVED = :1
+                  AND INTERFACE_FILE = :2
+                  AND TRUNC(EFFECTIVE_DATE) = :3
+                  AND ACTIVE = ''A''
+                  AND ' || col_rec.column_name || ' IS NOT NULL
+                  AND ROWNUM = 1';
+
+            DBMS_OUTPUT.PUT_LINE('----------------------------------');
+            DBMS_OUTPUT.PUT_LINE('Trying column: ' || col_rec.column_name);
+            DBMS_OUTPUT.PUT_LINE('SQL: ' || v_sql);
+
+            EXECUTE IMMEDIATE v_sql INTO v_val
+            USING v_FIELD_TO_BE_DERIVED, v_INTERFACE_FILE, v_EFFECTIVE_DATE;
+
+            IF v_val IS NOT NULL THEN
+                v_count := v_count + 1;
+                v_field_names(v_count) := col_rec.column_name;
+                v_field_values(v_count) := v_val;
+                DBMS_OUTPUT.PUT_LINE('✅ Found: ' || col_rec.column_name || ' = ' || v_val);
+            ELSE
+                DBMS_OUTPUT.PUT_LINE('⛔ No value in: ' || col_rec.column_name);
+            END IF;
+
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                DBMS_OUTPUT.PUT_LINE('⛔ No data found for: ' || col_rec.column_name);
+        END;
+    END LOOP;
+
+    IF v_count = 0 THEN
+        DBMS_OUTPUT.PUT_LINE('⚠ No FIELD_MAP_X values found for input filters.');
         RETURN;
     END IF;
 
-    DBMS_OUTPUT.PUT_LINE('✅ Row exists. Now fetching FIELD_MAP_X values:');
+    -- Step 2: Query PRODUCT_FIELD_MAPPING
+    v_sql := 'SELECT FIELD_VALUE_MAPPING';
+    FOR i IN 1 .. v_count LOOP
+        v_sql := v_sql || ', ' || v_field_names(i);
+    END LOOP;
 
-    -- Step 2: Fetch all field_map columns from the row
-    SELECT ROWID INTO v_rowid
-    FROM MAPPING_VALUE
-    WHERE FIELD_TO_BE_DERIVED = 'PRODUCT_FIELD_MAPPING'
-      AND INTERFACE_FILE = 'MAJESCO'
-      AND EFFECTIVE_DATE = TO_DATE('01-JUL-2024', 'DD-MON-YYYY')
-      AND ACTIVE = 'A'
-      AND ROWNUM = 1;
+    v_sql := v_sql || ' FROM PRODUCT_FIELD_MAPPING 
+        WHERE INTERFACE_FILE = :iface 
+        AND TRUNC(EFFECTIVE_DATE) = :effdate 
+        AND ACTIVE = ''A''';
 
-    SELECT FIELD_MAP_1, FIELD_MAP_2, FIELD_MAP_3, FIELD_MAP_4, FIELD_MAP_5,
-           FIELD_MAP_6, FIELD_MAP_7, FIELD_MAP_8, FIELD_MAP_9, FIELD_MAP_10
-    INTO v_f1, v_f2, v_f3, v_f4, v_f5, v_f6, v_f7, v_f8, v_f9, v_f10
-    FROM MAPPING_VALUE
-    WHERE ROWID = v_rowid;
+    FOR i IN 1 .. v_count LOOP
+        v_sql := v_sql || ' AND ' || v_field_names(i) || ' = ''' || REPLACE(v_field_values(i), '''', '''''') || '''';
+    END LOOP;
 
-    -- Step 3: Print values to confirm non-null ones
-    IF v_f1 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_1 = ' || v_f1); END IF;
-    IF v_f2 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_2 = ' || v_f2); END IF;
-    IF v_f3 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_3 = ' || v_f3); END IF;
-    IF v_f4 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_4 = ' || v_f4); END IF;
-    IF v_f5 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_5 = ' || v_f5); END IF;
-    IF v_f6 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_6 = ' || v_f6); END IF;
-    IF v_f7 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_7 = ' || v_f7); END IF;
-    IF v_f8 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_8 = ' || v_f8); END IF;
-    IF v_f9 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_9 = ' || v_f9); END IF;
-    IF v_f10 IS NOT NULL THEN DBMS_OUTPUT.PUT_LINE('FIELD_MAP_10 = ' || v_f10); END IF;
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔎 Executing SQL for PRODUCT_FIELD_MAPPING:');
+    DBMS_OUTPUT.PUT_LINE(v_sql);
 
-    IF v_f1 IS NULL AND v_f2 IS NULL AND v_f3 IS NULL AND v_f4 IS NULL AND 
-       v_f5 IS NULL AND v_f6 IS NULL AND v_f7 IS NULL AND v_f8 IS NULL AND
-       v_f9 IS NULL AND v_f10 IS NULL THEN
-        DBMS_OUTPUT.PUT_LINE('⚠️ All FIELD_MAP_X columns are NULL!');
-    END IF;
+    OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE;
+    LOOP
+        FETCH v_cursor INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
+        EXIT WHEN v_cursor%NOTFOUND;
+        DBMS_OUTPUT.PUT_LINE('📦 PRODUCT_MAPPING => ' || v_field_value_mapping || ' | ' ||
+                             v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
+    END LOOP;
+    CLOSE v_cursor;
+
+    -- Step 3: Query MCC_FIELD_MAPPING
+    v_sql := 'SELECT FIELD_VALUE_MAPPING';
+    FOR i IN 1 .. v_count LOOP
+        v_sql := v_sql || ', ' || v_field_names(i);
+    END LOOP;
+
+    v_sql := v_sql || ' FROM MCC_FIELD_MAPPING 
+        WHERE INTERFACE_FILE = :iface 
+        AND TRUNC(EFFECTIVE_DATE) = :effdate 
+        AND ACTIVE = ''A''';
+
+    FOR i IN 1 .. v_count LOOP
+        v_sql := v_sql || ' AND ' || v_field_names(i) || ' = ''' || REPLACE(v_field_values(i), '''', '''''') || '''';
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔎 Executing SQL for MCC_FIELD_MAPPING:');
+    DBMS_OUTPUT.PUT_LINE(v_sql);
+
+    OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE;
+    LOOP
+        FETCH v_cursor INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
+        EXIT WHEN v_cursor%NOTFOUND;
+        DBMS_OUTPUT.PUT_LINE('📦 MCC_MAPPING => ' || v_field_value_mapping || ' | ' ||
+                             v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
+    END LOOP;
+    CLOSE v_cursor;
 
 END;
 /
