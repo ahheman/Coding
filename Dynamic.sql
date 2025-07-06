@@ -73,15 +73,10 @@ BEGIN
                           AND TRUNC(EFFECTIVE_DATE) = :effdate
                           AND ACTIVE = ''A''';
 
-    FOR i IN 1 .. v_count LOOP
-        v_sql := v_sql || ' AND ' || v_field_names(i) || ' = :val' || i;
-    END LOOP;
-
     DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔎 PRODUCT_FIELD_MAPPING SQL:');
     DBMS_OUTPUT.PUT_LINE(v_sql);
 
-    OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE,
-        v_field_values(1), v_field_values(2), v_field_values(3);
+    OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE;
     LOOP
         FETCH v_cursor INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
         EXIT WHEN v_cursor%NOTFOUND;
@@ -100,15 +95,10 @@ BEGIN
                           AND TRUNC(EFFECTIVE_DATE) = :effdate
                           AND ACTIVE = ''A''';
 
-    FOR i IN 1 .. v_count LOOP
-        v_sql := v_sql || ' AND ' || v_field_names(i) || ' = :val' || i;
-    END LOOP;
-
     DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔎 MCC_FIELD_MAPPING SQL:');
     DBMS_OUTPUT.PUT_LINE(v_sql);
 
-    OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE,
-        v_field_values(1), v_field_values(2), v_field_values(3);
+    OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE;
     LOOP
         FETCH v_cursor INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
         EXIT WHEN v_cursor%NOTFOUND;
