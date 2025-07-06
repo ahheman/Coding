@@ -1,3 +1,5 @@
+SET SERVEROUTPUT ON;
+
 DECLARE
     -- Input test values
     v_FIELD_TO_BE_DERIVED   VARCHAR2(100) := 'PRODUCT_FIELD_MAPPING';
@@ -12,11 +14,11 @@ DECLARE
     v_sql           CLOB;
     v_cursor        SYS_REFCURSOR;
 
-    -- Output variables
+    -- Output variables (adjust as needed)
     v_field_value_mapping VARCHAR2(4000);
     v_dynamic_val1 VARCHAR2(4000);
     v_dynamic_val2 VARCHAR2(4000);
-    v_dynamic_val3 VARCHAR2(4000); -- extend as needed
+    v_dynamic_val3 VARCHAR2(4000);
 BEGIN
     -- Step 1: Get non-null FIELD_MAP_X columns from MAPPING_VALUE
     FOR col_rec IN (
@@ -33,8 +35,8 @@ BEGIN
                 FROM MAPPING_VALUE
                 WHERE FIELD_TO_BE_DERIVED = :1
                   AND INTERFACE_FILE = :2
-                  AND EFFECTIVE_DATE <= :3
-                  AND ACTIVE = ''Y''
+                  AND TRUNC(EFFECTIVE_DATE) = :3
+                  AND ACTIVE = ''A''
                   AND ' || col_rec.column_name || ' IS NOT NULL
                   AND ROWNUM = 1';
 
@@ -45,6 +47,7 @@ BEGIN
                 v_count := v_count + 1;
                 v_field_names(v_count) := col_rec.column_name;
                 v_field_values(v_count) := v_val;
+                DBMS_OUTPUT.PUT_LINE('✔ FIELD FOUND: ' || col_rec.column_name || ' = ' || v_val);
             END IF;
         EXCEPTION
             WHEN NO_DATA_FOUND THEN NULL;
@@ -52,11 +55,11 @@ BEGIN
     END LOOP;
 
     IF v_count = 0 THEN
-        DBMS_OUTPUT.PUT_LINE('No field_map_x values found for input filters.');
+        DBMS_OUTPUT.PUT_LINE('⚠ No FIELD_MAP_X values found for input filters.');
         RETURN;
     END IF;
 
-    -- Step 2: Build dynamic SQL for PRODUCT_FIELD_MAPPING
+    -- Step 2: Query PRODUCT_FIELD_MAPPING
     v_sql := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ', ' || v_field_names(i);
@@ -64,28 +67,26 @@ BEGIN
 
     v_sql := v_sql || ' FROM PRODUCT_FIELD_MAPPING 
         WHERE INTERFACE_FILE = :iface 
-        AND EFFECTIVE_DATE <= :effdate 
-        AND ACTIVE = ''Y''';
+        AND TRUNC(EFFECTIVE_DATE) = :effdate 
+        AND ACTIVE = ''A''';
 
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ' AND ' || v_field_names(i) || ' = ''' || REPLACE(v_field_values(i), '''', '''''') || '''';
     END LOOP;
 
-    -- Print SQL (debugging)
-    DBMS_OUTPUT.PUT_LINE('Executing SQL for PRODUCT_FIELD_MAPPING:');
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔎 Executing SQL for PRODUCT_FIELD_MAPPING:');
     DBMS_OUTPUT.PUT_LINE(v_sql);
 
-    -- Execute and loop through results
     OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE;
     LOOP
-        -- Adjust depending on number of dynamic fields
         FETCH v_cursor INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
         EXIT WHEN v_cursor%NOTFOUND;
-        DBMS_OUTPUT.PUT_LINE('PRODUCT_MAPPING => ' || v_field_value_mapping || ' | ' || v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
+        DBMS_OUTPUT.PUT_LINE('📦 PRODUCT_MAPPING => ' || v_field_value_mapping || ' | ' ||
+                             v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
     END LOOP;
     CLOSE v_cursor;
 
-    -- Step 3: Repeat for MCC_FIELD_MAPPING
+    -- Step 3: Query MCC_FIELD_MAPPING
     v_sql := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ', ' || v_field_names(i);
@@ -93,23 +94,22 @@ BEGIN
 
     v_sql := v_sql || ' FROM MCC_FIELD_MAPPING 
         WHERE INTERFACE_FILE = :iface 
-        AND EFFECTIVE_DATE <= :effdate 
-        AND ACTIVE = ''Y''';
+        AND TRUNC(EFFECTIVE_DATE) = :effdate 
+        AND ACTIVE = ''A''';
 
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ' AND ' || v_field_names(i) || ' = ''' || REPLACE(v_field_values(i), '''', '''''') || '''';
     END LOOP;
 
-    -- Print SQL (debugging)
-    DBMS_OUTPUT.PUT_LINE('Executing SQL for MCC_FIELD_MAPPING:');
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔎 Executing SQL for MCC_FIELD_MAPPING:');
     DBMS_OUTPUT.PUT_LINE(v_sql);
 
-    -- Execute and loop through results
     OPEN v_cursor FOR v_sql USING v_INTERFACE_FILE, v_EFFECTIVE_DATE;
     LOOP
         FETCH v_cursor INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
         EXIT WHEN v_cursor%NOTFOUND;
-        DBMS_OUTPUT.PUT_LINE('MCC_MAPPING => ' || v_field_value_mapping || ' | ' || v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
+        DBMS_OUTPUT.PUT_LINE('📦 MCC_MAPPING => ' || v_field_value_mapping || ' | ' ||
+                             v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
     END LOOP;
     CLOSE v_cursor;
 
