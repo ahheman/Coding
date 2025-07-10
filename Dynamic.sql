@@ -11,7 +11,7 @@ AS
 BEGIN
     o_result_rows := STAGING.mapping_table_type();  -- initialize output
 
-    -- Step 1: Get field_map_x columns which have data
+    --  Get field_map_x columns which have data
     FOR col_rec IN (
         SELECT column_name
         FROM all_tab_columns
@@ -49,7 +49,7 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Step 2: Build dynamic SQL
+    --  Build dynamic SQL
     v_sql := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ', ' || v_field_names(i);
@@ -62,7 +62,7 @@ BEGIN
         END ||
         ' WHERE INTERFACE_FILE = :1 AND TRUNC(EFFECTIVE_DATE) = :2 AND ACTIVE = ''A''';
 
-    -- Step 3: Execute and fetch into result
+    --  Execute and fetch into result
     DECLARE
         TYPE t_row IS TABLE OF VARCHAR2(4000) INDEX BY PLS_INTEGER;
         v_stmt     VARCHAR2(32767);
