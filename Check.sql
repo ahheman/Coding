@@ -1,46 +1,31 @@
+SET SERVEROUTPUT ON;
+
 DECLARE
-    -- Input parameters
-    p_FIELD_TO_BE_DERIVED   VARCHAR2(100) := 'CATEGORY_CODE'; 
-    p_INTERFACE_FILE        VARCHAR2(100) := 'MAJESCO'; 
-    p_EFFECTIVE_DATE        DATE := TO_DATE('01-JUL-2024','DD-MON-YY'); 
+    -- Input Parameters
+    p_FIELD_TO_BE_DERIVED   VARCHAR2(100) := 'PRODUCT_FIELD_MAPPING';
+    p_INTERFACE_FILE        VARCHAR2(100) := 'MAJESCO';
+    p_EFFECTIVE_DATE        DATE := TO_DATE('01-JUL-2024', 'DD-MON-YYYY');
 
-    -- Variables
-    v_field_names      DBMS_SQL.VARCHAR2_TABLE;
-    v_field_values     DBMS_SQL.VARCHAR2_TABLE;
-    v_count            INTEGER := 0;
-    v_val              VARCHAR2(4000);
-    v_sql_product      CLOB;
-    v_sql_mcc          CLOB;
-    v_product_columns  SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
-    v_mcc_columns      SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
+    -- Field holders
+    v_field_names   DBMS_SQL.VARCHAR2_TABLE;
+    v_field_values  DBMS_SQL.VARCHAR2_TABLE;
+    v_count         INTEGER := 0;
+    v_val           VARCHAR2(4000);
+    v_sql_product   CLOB;
+    v_sql_mcc       CLOB;
 
-    -- Cursors for output
-    c_product SYS_REFCURSOR;
-    c_mcc     SYS_REFCURSOR;
+    -- Cursors
+    v_cursor_product SYS_REFCURSOR;
+    v_cursor_mcc     SYS_REFCURSOR;
+
+    -- Output fields
+    v_field_value_mapping VARCHAR2(4000);
+    v_dynamic_val1        VARCHAR2(4000);
+    v_dynamic_val2        VARCHAR2(4000);
+    v_dynamic_val3        VARCHAR2(4000);
+
 BEGIN
-    -- Step 1: Get FIELD_MAP_% columns in PRODUCT_FIELD_MAPPING
-    FOR rec IN (
-        SELECT column_name FROM all_tab_columns
-        WHERE owner = 'STAGING'
-          AND table_name = 'PRODUCT_FIELD_MAPPING'
-          AND column_name LIKE 'FIELD_MAP_%'
-    ) LOOP
-        v_product_columns.EXTEND;
-        v_product_columns(v_product_columns.COUNT) := rec.column_name;
-    END LOOP;
-
-    -- Step 2: Get FIELD_MAP_% columns in MCC_FIELD_MAPPING
-    FOR rec IN (
-        SELECT column_name FROM all_tab_columns
-        WHERE owner = 'STAGING'
-          AND table_name = 'MCC_FIELD_MAPPING'
-          AND column_name LIKE 'FIELD_MAP_%'
-    ) LOOP
-        v_mcc_columns.EXTEND;
-        v_mcc_columns(v_mcc_columns.COUNT) := rec.column_name;
-    END LOOP;
-
-    -- Step 3: Get FIELD_MAP_% values from MAPPING_VALUE
+    -- Step 1: Dynamically fetch which FIELD_MAP_X columns have values
     FOR col_rec IN (
         SELECT column_name
         FROM all_tab_columns
@@ -53,81 +38,83 @@ BEGIN
             EXECUTE IMMEDIATE '
                 SELECT ' || col_rec.column_name || '
                 FROM STAGING.MAPPING_VALUE
-                WHERE FIELD_TO_BE_DERIVED = :p1
-                  AND INTERFACE_FILE = :p2
-                  AND TRUNC(EFFECTIVE_DATE) = :p3
+                WHERE FIELD_TO_BE_DERIVED = :1
+                  AND INTERFACE_FILE = :2
+                  AND TRUNC(EFFECTIVE_DATE) = :3
                   AND ACTIVE = ''A''
                   AND ' || col_rec.column_name || ' IS NOT NULL
-                  AND ROWNUM = 1
-            ' INTO v_val
+                  AND ROWNUM = 1'
+            INTO v_val
             USING p_FIELD_TO_BE_DERIVED, p_INTERFACE_FILE, p_EFFECTIVE_DATE;
 
             IF v_val IS NOT NULL THEN
                 v_count := v_count + 1;
                 v_field_names(v_count) := col_rec.column_name;
                 v_field_values(v_count) := v_val;
+                DBMS_OUTPUT.PUT_LINE('✔ ' || col_rec.column_name || ' = ' || v_val);
             END IF;
         EXCEPTION
             WHEN NO_DATA_FOUND THEN NULL;
             WHEN OTHERS THEN
-                DBMS_OUTPUT.PUT_LINE('Error fetching ' || col_rec.column_name || ': ' || SQLERRM);
+                DBMS_OUTPUT.PUT_LINE('Error on ' || col_rec.column_name || ': ' || SQLERRM);
         END;
     END LOOP;
 
-    -- Step 4: Handle case when no mappings found
     IF v_count = 0 THEN
-        DBMS_OUTPUT.PUT_LINE('No FIELD_MAP_% values found.');
+        DBMS_OUTPUT.PUT_LINE('⚠ No FIELD_MAP_X values found.');
         RETURN;
     END IF;
 
-    -- Step 5: Build SQL for PRODUCT_FIELD_MAPPING
+    -- Step 2: Build dynamic SQL for PRODUCT_FIELD_MAPPING
     v_sql_product := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
-        IF v_field_names(i) MEMBER OF v_product_columns THEN
-            v_sql_product := v_sql_product || ', ' || v_field_names(i);
-        END IF;
+        v_sql_product := v_sql_product || ', ' || v_field_names(i);
     END LOOP;
 
-    v_sql_product := v_sql_product || ' FROM STAGING.PRODUCT_FIELD_MAPPING
-        WHERE INTERFACE_FILE = :iface
-          AND TRUNC(EFFECTIVE_DATE) = :effdate
-          AND ACTIVE = ''A''';
+    v_sql_product := v_sql_product || '
+        FROM STAGING.PRODUCT_FIELD_MAPPING
+        WHERE INTERFACE_FILE = :1
+        AND TRUNC(EFFECTIVE_DATE) = :2
+        AND ACTIVE = ''A''';
 
-    -- Step 6: Build SQL for MCC_FIELD_MAPPING
+    -- Step 3: Build dynamic SQL for MCC_FIELD_MAPPING
     v_sql_mcc := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
-        IF v_field_names(i) MEMBER OF v_mcc_columns THEN
-            v_sql_mcc := v_sql_mcc || ', ' || v_field_names(i);
-        END IF;
+        v_sql_mcc := v_sql_mcc || ', ' || v_field_names(i);
     END LOOP;
 
-    v_sql_mcc := v_sql_mcc || ' FROM STAGING.MCC_FIELD_MAPPING
-        WHERE INTERFACE_FILE = :iface
-          AND TRUNC(EFFECTIVE_DATE) = :effdate
-          AND ACTIVE = ''A''';
+    v_sql_mcc := v_sql_mcc || '
+        FROM STAGING.MCC_FIELD_MAPPING
+        WHERE INTERFACE_FILE = :1
+        AND TRUNC(EFFECTIVE_DATE) = :2
+        AND ACTIVE = ''A''';
 
-    -- Step 7: Open and fetch PRODUCT cursor
-    OPEN c_product FOR v_sql_product USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
-    DBMS_OUTPUT.PUT_LINE('--- PRODUCT_FIELD_MAPPING ---');
+    -- Print SQL
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔍 PRODUCT SQL:');
+    DBMS_OUTPUT.PUT_LINE(v_sql_product);
+
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '🔍 MCC SQL:');
+    DBMS_OUTPUT.PUT_LINE(v_sql_mcc);
+
+    -- Execute PRODUCT cursor
+    OPEN v_cursor_product FOR v_sql_product USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
     LOOP
-        FETCH c_product INTO v_val;
-        EXIT WHEN c_product%NOTFOUND;
-        DBMS_OUTPUT.PUT_LINE('Row: ' || v_val);
+        FETCH v_cursor_product INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
+        EXIT WHEN v_cursor_product%NOTFOUND;
+        DBMS_OUTPUT.PUT_LINE('📦 PRODUCT => ' || v_field_value_mapping || ' | ' ||
+                             v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
     END LOOP;
-    CLOSE c_product;
+    CLOSE v_cursor_product;
 
-    -- Step 8: Open and fetch MCC cursor
-    OPEN c_mcc FOR v_sql_mcc USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
-    DBMS_OUTPUT.PUT_LINE('--- MCC_FIELD_MAPPING ---');
+    -- Execute MCC cursor
+    OPEN v_cursor_mcc FOR v_sql_mcc USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
     LOOP
-        FETCH c_mcc INTO v_val;
-        EXIT WHEN c_mcc%NOTFOUND;
-        DBMS_OUTPUT.PUT_LINE('Row: ' || v_val);
+        FETCH v_cursor_mcc INTO v_field_value_mapping, v_dynamic_val1, v_dynamic_val2, v_dynamic_val3;
+        EXIT WHEN v_cursor_mcc%NOTFOUND;
+        DBMS_OUTPUT.PUT_LINE('📦 MCC => ' || v_field_value_mapping || ' | ' ||
+                             v_dynamic_val1 || ' | ' || v_dynamic_val2 || ' | ' || v_dynamic_val3);
     END LOOP;
-    CLOSE c_mcc;
+    CLOSE v_cursor_mcc;
 
-EXCEPTION
-    WHEN OTHERS THEN
-        DBMS_OUTPUT.PUT_LINE('Unhandled Error: ' || SQLERRM);
 END;
 /
