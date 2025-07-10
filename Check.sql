@@ -12,9 +12,7 @@ DECLARE
 
     -- DBMS_SQL variables
     v_cursor       INTEGER;
-    col_count      INTEGER;
     col_val        VARCHAR2(4000);
-    desc_tab       DBMS_SQL.DESC_TAB;
     col_num        NUMBER;
 
 BEGIN
@@ -57,29 +55,31 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Step 2: Construct SELECT for PRODUCT_FIELD_MAPPING
+    -- Step 2: Build dynamic SQL for PRODUCT_FIELD_MAPPING
     v_sql_product := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql_product := v_sql_product || ', ' || v_field_names(i);
     END LOOP;
+
     v_sql_product := v_sql_product || '
         FROM STAGING.PRODUCT_FIELD_MAPPING
         WHERE INTERFACE_FILE = ''' || v_interface_file || '''
           AND TRUNC(EFFECTIVE_DATE) = TO_DATE(''' || TO_CHAR(v_effective_date, 'DD-MON-YYYY') || ''')
           AND ACTIVE = ''A''';
 
-    DBMS_OUTPUT.PUT_LINE(CHR(10) || '▶ Executing SQL:');
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '▶ PRODUCT SQL:');
     DBMS_OUTPUT.PUT_LINE(v_sql_product);
 
-    -- Step 3: Execute using DBMS_SQL
+    -- Execute PRODUCT query
     v_cursor := DBMS_SQL.OPEN_CURSOR;
     DBMS_SQL.PARSE(v_cursor, v_sql_product, DBMS_SQL.NATIVE);
     DBMS_SQL.DEFINE_COLUMN(v_cursor, 1, col_val, 4000);
     FOR i IN 1 .. v_count LOOP
         DBMS_SQL.DEFINE_COLUMN(v_cursor, i + 1, col_val, 4000);
     END LOOP;
-
     col_num := DBMS_SQL.EXECUTE(v_cursor);
+
+    DBMS_OUTPUT.PUT_LINE('📦 PRODUCT_FIELD_MAPPING Result:');
     WHILE DBMS_SQL.FETCH_ROWS(v_cursor) > 0 LOOP
         FOR j IN 1 .. v_count + 1 LOOP
             DBMS_SQL.COLUMN_VALUE(v_cursor, j, col_val);
@@ -87,11 +87,42 @@ BEGIN
         END LOOP;
         DBMS_OUTPUT.NEW_LINE;
     END LOOP;
-
     DBMS_SQL.CLOSE_CURSOR(v_cursor);
 
-    -- Repeat same for MCC if needed
-    DBMS_OUTPUT.PUT_LINE(CHR(10) || '✅ Finished PRODUCT_FIELD_MAPPING output.');
+    -- Step 3: Build dynamic SQL for MCC_FIELD_MAPPING
+    v_sql_mcc := 'SELECT FIELD_VALUE_MAPPING';
+    FOR i IN 1 .. v_count LOOP
+        v_sql_mcc := v_sql_mcc || ', ' || v_field_names(i);
+    END LOOP;
 
+    v_sql_mcc := v_sql_mcc || '
+        FROM STAGING.MCC_FIELD_MAPPING
+        WHERE INTERFACE_FILE = ''' || v_interface_file || '''
+          AND TRUNC(EFFECTIVE_DATE) = TO_DATE(''' || TO_CHAR(v_effective_date, 'DD-MON-YYYY') || ''')
+          AND ACTIVE = ''A''';
+
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '▶ MCC SQL:');
+    DBMS_OUTPUT.PUT_LINE(v_sql_mcc);
+
+    -- Execute MCC query
+    v_cursor := DBMS_SQL.OPEN_CURSOR;
+    DBMS_SQL.PARSE(v_cursor, v_sql_mcc, DBMS_SQL.NATIVE);
+    DBMS_SQL.DEFINE_COLUMN(v_cursor, 1, col_val, 4000);
+    FOR i IN 1 .. v_count LOOP
+        DBMS_SQL.DEFINE_COLUMN(v_cursor, i + 1, col_val, 4000);
+    END LOOP;
+    col_num := DBMS_SQL.EXECUTE(v_cursor);
+
+    DBMS_OUTPUT.PUT_LINE('📦 MCC_FIELD_MAPPING Result:');
+    WHILE DBMS_SQL.FETCH_ROWS(v_cursor) > 0 LOOP
+        FOR j IN 1 .. v_count + 1 LOOP
+            DBMS_SQL.COLUMN_VALUE(v_cursor, j, col_val);
+            DBMS_OUTPUT.PUT(CHR(9) || col_val);
+        END LOOP;
+        DBMS_OUTPUT.NEW_LINE;
+    END LOOP;
+    DBMS_SQL.CLOSE_CURSOR(v_cursor);
+
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '✅ Finished processing both PRODUCT and MCC mappings.');
 END;
 /
