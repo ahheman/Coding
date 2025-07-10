@@ -1,29 +1,24 @@
 SET SERVEROUTPUT ON;
 DECLARE
-    -- Input values
-    p_FIELD_TO_BE_DERIVED   VARCHAR2(100) := 'PRODUCT_FIELD_MAPPING';
-    p_INTERFACE_FILE        VARCHAR2(100) := 'MAJESCO';
-    p_EFFECTIVE_DATE        DATE := TO_DATE('01-JUL-2024', 'DD-MON-YYYY');
+    v_field_names    DBMS_SQL.VARCHAR2_TABLE;
+    v_field_values   DBMS_SQL.VARCHAR2_TABLE;
+    v_count          INTEGER := 0;
+    v_val            VARCHAR2(4000);
+    v_sql_product    VARCHAR2(32000);
+    v_sql_mcc        VARCHAR2(32000);
+    v_field_to_be_derived VARCHAR2(100) := 'PRODUCT_FIELD_MAPPING';
+    v_interface_file      VARCHAR2(100) := 'MAJESCO';
+    v_effective_date      DATE := TO_DATE('01-JUL-2024','DD-MON-YYYY');
 
-    -- Output cursors
-    o_cursor_product  SYS_REFCURSOR;
-    o_cursor_mcc      SYS_REFCURSOR;
+    -- DBMS_SQL variables
+    v_cursor       INTEGER;
+    col_count      INTEGER;
+    col_val        VARCHAR2(4000);
+    desc_tab       DBMS_SQL.DESC_TAB;
+    col_num        NUMBER;
 
-    -- Internal variables
-    v_field_names   DBMS_SQL.VARCHAR2_TABLE;
-    v_field_values  DBMS_SQL.VARCHAR2_TABLE;
-    v_count         INTEGER := 0;
-    v_val           VARCHAR2(4000);
-    v_sql_product   CLOB;
-    v_sql_mcc       CLOB;
-
-    -- Temp fetch variables
-    v_field_value_mapping VARCHAR2(4000);
-    v_map1 VARCHAR2(4000);
-    v_map2 VARCHAR2(4000);
-    v_map3 VARCHAR2(4000);
 BEGIN
-    -- Step 1: Extract column names with value
+    -- Step 1: Get FIELD_MAP_X columns with values
     FOR col_rec IN (
         SELECT column_name
         FROM all_tab_columns
@@ -34,76 +29,69 @@ BEGIN
     )
     LOOP
         BEGIN
-            EXECUTE IMMEDIATE 'SELECT ' || col_rec.column_name || '
-                               FROM STAGING.MAPPING_VALUE
-                               WHERE FIELD_TO_BE_DERIVED = :1
-                                 AND INTERFACE_FILE = :2
-                                 AND TRUNC(EFFECTIVE_DATE) = :3
-                                 AND ACTIVE = ''A''
-                                 AND ' || col_rec.column_name || ' IS NOT NULL
-                                 AND ROWNUM = 1'
+            EXECUTE IMMEDIATE '
+                SELECT ' || col_rec.column_name || '
+                FROM STAGING.MAPPING_VALUE
+                WHERE FIELD_TO_BE_DERIVED = :1
+                  AND INTERFACE_FILE = :2
+                  AND TRUNC(EFFECTIVE_DATE) = :3
+                  AND ACTIVE = ''A''
+                  AND ' || col_rec.column_name || ' IS NOT NULL
+                  AND ROWNUM = 1'
             INTO v_val
-            USING p_FIELD_TO_BE_DERIVED, p_INTERFACE_FILE, p_EFFECTIVE_DATE;
+            USING v_field_to_be_derived, v_interface_file, v_effective_date;
 
             IF v_val IS NOT NULL THEN
                 v_count := v_count + 1;
                 v_field_names(v_count) := col_rec.column_name;
                 v_field_values(v_count) := v_val;
-                DBMS_OUTPUT.PUT_LINE('✔ ' || col_rec.column_name || ' = ' || v_val);
+                DBMS_OUTPUT.PUT_LINE('✔ Found: ' || col_rec.column_name || ' = ' || v_val);
             END IF;
         EXCEPTION
-            WHEN NO_DATA_FOUND THEN NULL;
             WHEN OTHERS THEN NULL;
         END;
     END LOOP;
 
     IF v_count = 0 THEN
-        DBMS_OUTPUT.PUT_LINE('⚠ No field_map_x columns found.');
+        DBMS_OUTPUT.PUT_LINE('⚠ No FIELD_MAP_X values found.');
         RETURN;
     END IF;
 
-    -- Build PRODUCT SQL
+    -- Step 2: Construct SELECT for PRODUCT_FIELD_MAPPING
     v_sql_product := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql_product := v_sql_product || ', ' || v_field_names(i);
     END LOOP;
-    v_sql_product := v_sql_product || ' FROM STAGING.PRODUCT_FIELD_MAPPING
-        WHERE INTERFACE_FILE = :1
-          AND TRUNC(EFFECTIVE_DATE) = :2
+    v_sql_product := v_sql_product || '
+        FROM STAGING.PRODUCT_FIELD_MAPPING
+        WHERE INTERFACE_FILE = ''' || v_interface_file || '''
+          AND TRUNC(EFFECTIVE_DATE) = TO_DATE(''' || TO_CHAR(v_effective_date, 'DD-MON-YYYY') || ''')
           AND ACTIVE = ''A''';
 
-    DBMS_OUTPUT.PUT_LINE(CHR(10) || '▶ PRODUCT SQL:');
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '▶ Executing SQL:');
     DBMS_OUTPUT.PUT_LINE(v_sql_product);
 
-    -- Build MCC SQL
-    v_sql_mcc := 'SELECT FIELD_VALUE_MAPPING';
+    -- Step 3: Execute using DBMS_SQL
+    v_cursor := DBMS_SQL.OPEN_CURSOR;
+    DBMS_SQL.PARSE(v_cursor, v_sql_product, DBMS_SQL.NATIVE);
+    DBMS_SQL.DEFINE_COLUMN(v_cursor, 1, col_val, 4000);
     FOR i IN 1 .. v_count LOOP
-        v_sql_mcc := v_sql_mcc || ', ' || v_field_names(i);
+        DBMS_SQL.DEFINE_COLUMN(v_cursor, i + 1, col_val, 4000);
     END LOOP;
-    v_sql_mcc := v_sql_mcc || ' FROM STAGING.MCC_FIELD_MAPPING
-        WHERE INTERFACE_FILE = :1
-          AND TRUNC(EFFECTIVE_DATE) = :2
-          AND ACTIVE = ''A''';
 
-    DBMS_OUTPUT.PUT_LINE(CHR(10) || '▶ MCC SQL:');
-    DBMS_OUTPUT.PUT_LINE(v_sql_mcc);
-
-    -- Open and fetch PRODUCT cursor
-    OPEN o_cursor_product FOR v_sql_product USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
-    LOOP
-        FETCH o_cursor_product INTO v_field_value_mapping, v_map1, v_map2, v_map3;
-        EXIT WHEN o_cursor_product%NOTFOUND;
-        DBMS_OUTPUT.PUT_LINE('PRODUCT => ' || v_field_value_mapping || ' | ' || v_map1 || ' | ' || v_map2 || ' | ' || v_map3);
+    col_num := DBMS_SQL.EXECUTE(v_cursor);
+    WHILE DBMS_SQL.FETCH_ROWS(v_cursor) > 0 LOOP
+        FOR j IN 1 .. v_count + 1 LOOP
+            DBMS_SQL.COLUMN_VALUE(v_cursor, j, col_val);
+            DBMS_OUTPUT.PUT(CHR(9) || col_val);
+        END LOOP;
+        DBMS_OUTPUT.NEW_LINE;
     END LOOP;
-    CLOSE o_cursor_product;
 
-    -- Open and fetch MCC cursor
-    OPEN o_cursor_mcc FOR v_sql_mcc USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
-    LOOP
-        FETCH o_cursor_mcc INTO v_field_value_mapping, v_map1, v_map2, v_map3;
-        EXIT WHEN o_cursor_mcc%NOTFOUND;
-        DBMS_OUTPUT.PUT_LINE('MCC => ' || v_field_value_mapping || ' | ' || v_map1 || ' | ' || v_map2 || ' | ' || v_map3);
-    END LOOP;
-    CLOSE o_cursor_mcc;
+    DBMS_SQL.CLOSE_CURSOR(v_cursor);
+
+    -- Repeat same for MCC if needed
+    DBMS_OUTPUT.PUT_LINE(CHR(10) || '✅ Finished PRODUCT_FIELD_MAPPING output.');
+
 END;
 /
