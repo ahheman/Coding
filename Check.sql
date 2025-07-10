@@ -1,8 +1,8 @@
 DECLARE
     -- Input parameters
-    p_FIELD_TO_BE_DERIVED   VARCHAR2(100) := 'CATEGORY_CODE';
-    p_INTERFACE_FILE        VARCHAR2(100) := 'ABC_INTERFACE';
-    p_EFFECTIVE_DATE        DATE := SYSDATE;
+    p_FIELD_TO_BE_DERIVED   VARCHAR2(100) := 'CATEGORY_CODE'; 
+    p_INTERFACE_FILE        VARCHAR2(100) := 'MAJESCO'; 
+    p_EFFECTIVE_DATE        DATE := TO_DATE('01-JUL-2024','DD-MON-YY'); 
 
     -- Variables
     v_field_names      DBMS_SQL.VARCHAR2_TABLE;
@@ -53,9 +53,9 @@ BEGIN
             EXECUTE IMMEDIATE '
                 SELECT ' || col_rec.column_name || '
                 FROM STAGING.MAPPING_VALUE
-                WHERE FIELD_TO_BE_DERIVED = :1
-                  AND INTERFACE_FILE = :2
-                  AND TRUNC(EFFECTIVE_DATE) = :3
+                WHERE FIELD_TO_BE_DERIVED = :p1
+                  AND INTERFACE_FILE = :p2
+                  AND TRUNC(EFFECTIVE_DATE) = :p3
                   AND ACTIVE = ''A''
                   AND ' || col_rec.column_name || ' IS NOT NULL
                   AND ROWNUM = 1
@@ -69,7 +69,8 @@ BEGIN
             END IF;
         EXCEPTION
             WHEN NO_DATA_FOUND THEN NULL;
-            WHEN OTHERS THEN NULL;
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Error fetching ' || col_rec.column_name || ': ' || SQLERRM);
         END;
     END LOOP;
 
@@ -105,21 +106,20 @@ BEGIN
           AND TRUNC(EFFECTIVE_DATE) = :effdate
           AND ACTIVE = ''A''';
 
-    -- Step 7: Open cursors and fetch results
+    -- Step 7: Open and fetch PRODUCT cursor
     OPEN c_product FOR v_sql_product USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
     DBMS_OUTPUT.PUT_LINE('--- PRODUCT_FIELD_MAPPING ---');
     LOOP
-        EXIT WHEN c_product%NOTFOUND;
         FETCH c_product INTO v_val;
         EXIT WHEN c_product%NOTFOUND;
         DBMS_OUTPUT.PUT_LINE('Row: ' || v_val);
     END LOOP;
     CLOSE c_product;
 
+    -- Step 8: Open and fetch MCC cursor
     OPEN c_mcc FOR v_sql_mcc USING p_INTERFACE_FILE, p_EFFECTIVE_DATE;
     DBMS_OUTPUT.PUT_LINE('--- MCC_FIELD_MAPPING ---');
     LOOP
-        EXIT WHEN c_mcc%NOTFOUND;
         FETCH c_mcc INTO v_val;
         EXIT WHEN c_mcc%NOTFOUND;
         DBMS_OUTPUT.PUT_LINE('Row: ' || v_val);
@@ -128,6 +128,6 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        DBMS_OUTPUT.PUT_LINE('Error: ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('Unhandled Error: ' || SQLERRM);
 END;
 /
