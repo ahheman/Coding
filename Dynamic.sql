@@ -8,10 +8,16 @@ AS
     v_field_names   DBMS_SQL.VARCHAR2_TABLE;
     v_count         INTEGER := 0;
     v_sql           VARCHAR2(32767);
+    v_cursor_id     INTEGER;
+    v_column_value  VARCHAR2(4000);
+    v_fvm           VARCHAR2(4000);
+    col_val         VARCHAR2(4000);
+    v_status        INTEGER;
+    v_col_cnt       INTEGER;
 BEGIN
     o_result_rows := STAGING.mapping_table_type();  -- initialize output
 
-    --  Get field_map_x columns which have data
+    -- Step 1: Identify relevant field_map columns with non-null values
     FOR col_rec IN (
         SELECT column_name
         FROM all_tab_columns
@@ -20,8 +26,6 @@ BEGIN
           AND column_name LIKE 'FIELD_MAP_%'
         ORDER BY column_name
     ) LOOP
-        DECLARE
-            v_temp_val VARCHAR2(4000);
         BEGIN
             EXECUTE IMMEDIATE '
                 SELECT ' || col_rec.column_name || '
@@ -32,10 +36,10 @@ BEGIN
                    AND ACTIVE = ''A''
                    AND ' || col_rec.column_name || ' IS NOT NULL
                    AND ROWNUM = 1'
-            INTO v_temp_val
+            INTO col_val
             USING p_field_to_be_derived, p_interface_file, p_effective_date;
 
-            IF v_temp_val IS NOT NULL THEN
+            IF col_val IS NOT NULL THEN
                 v_count := v_count + 1;
                 v_field_names(v_count) := col_rec.column_name;
             END IF;
@@ -49,7 +53,7 @@ BEGIN
         RETURN;
     END IF;
 
-    --  Build dynamic SQL
+    -- Step 2: Construct dynamic SQL
     v_sql := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ', ' || v_field_names(i);
@@ -60,40 +64,41 @@ BEGIN
             WHEN 'PRODUCT_FIELD_MAPPING' THEN 'PRODUCT_FIELD_MAPPING'
             WHEN 'MCC_FIELD_MAPPING' THEN 'MCC_FIELD_MAPPING'
         END ||
-        ' WHERE INTERFACE_FILE = :1 AND TRUNC(EFFECTIVE_DATE) = :2 AND ACTIVE = ''A''';
+        ' WHERE INTERFACE_FILE = :iface AND TRUNC(EFFECTIVE_DATE) = :effdate AND ACTIVE = ''A''';
 
-    --  Execute and fetch into result
-    DECLARE
-        TYPE t_row IS TABLE OF VARCHAR2(4000) INDEX BY PLS_INTEGER;
-        v_stmt     VARCHAR2(32767);
-        v_cur      SYS_REFCURSOR;
-        v_val_list t_row;
-        v_fvm      VARCHAR2(4000);
-        i          INTEGER;
-    BEGIN
-        OPEN v_cur FOR v_sql USING p_interface_file, p_effective_date;
+    -- Step 3: Use DBMS_SQL for dynamic column handling
+    v_cursor_id := DBMS_SQL.OPEN_CURSOR;
 
-        LOOP
-            v_val_list.DELETE;
-            FETCH v_cur INTO v_fvm, v_val_list(1), v_val_list(2), v_val_list(3), v_val_list(4),
-                              v_val_list(5), v_val_list(6), v_val_list(7), v_val_list(8), v_val_list(9);
-            EXIT WHEN v_cur%NOTFOUND;
+    DBMS_SQL.PARSE(v_cursor_id, v_sql, DBMS_SQL.NATIVE);
 
-            DECLARE
-                temp_list SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
-            BEGIN
-                FOR j IN 1 .. v_count LOOP
-                    temp_list.EXTEND;
-                    temp_list(j) := v_val_list(j);
-                END LOOP;
+    -- Bind variables
+    DBMS_SQL.BIND_VARIABLE(v_cursor_id, ':iface', p_interface_file);
+    DBMS_SQL.BIND_VARIABLE(v_cursor_id, ':effdate', p_effective_date);
 
-                o_result_rows.EXTEND;
-                o_result_rows(o_result_rows.COUNT) := STAGING.mapping_row_type(v_fvm, temp_list);
-            END;
-        END LOOP;
+    -- Define Columns
+    DBMS_SQL.DEFINE_COLUMN(v_cursor_id, 1, v_fvm, 4000);
+    FOR i IN 1 .. v_count LOOP
+        DBMS_SQL.DEFINE_COLUMN(v_cursor_id, i + 1, v_column_value, 4000);
+    END LOOP;
 
-        CLOSE v_cur;
-    END;
+    v_status := DBMS_SQL.EXECUTE(v_cursor_id);
 
+    WHILE DBMS_SQL.FETCH_ROWS(v_cursor_id) > 0 LOOP
+        DECLARE
+            temp_list SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
+        BEGIN
+            DBMS_SQL.COLUMN_VALUE(v_cursor_id, 1, v_fvm);
+            FOR j IN 1 .. v_count LOOP
+                DBMS_SQL.COLUMN_VALUE(v_cursor_id, j + 1, v_column_value);
+                temp_list.EXTEND;
+                temp_list(j) := v_column_value;
+            END LOOP;
+
+            o_result_rows.EXTEND;
+            o_result_rows(o_result_rows.COUNT) := STAGING.mapping_row_type(v_fvm, temp_list);
+        END;
+    END LOOP;
+
+    DBMS_SQL.CLOSE_CURSOR(v_cursor_id);
 END;
 /
