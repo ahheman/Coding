@@ -1,4 +1,4 @@
-PROCEDURE sp_getdynamicmappingvalues (
+CREATE OR REPLACE PROCEDURE sp_getdynamicmappingvalues (
     p_field_to_be_derived IN  VARCHAR2,
     p_interface_file      IN  VARCHAR2,
     p_effective_date      IN  DATE,
@@ -15,7 +15,7 @@ PROCEDURE sp_getdynamicmappingvalues (
 BEGIN
     o_result_rows := mapping_table_type();  -- Initialize output
 
-    -- Step 1: Find relevant FIELD_MAP_% columns that are not null
+    --  Find relevant FIELD_MAP_% columns that are not null
     FOR col_rec IN (
         SELECT column_name
         FROM all_tab_columns
@@ -47,8 +47,10 @@ BEGIN
             v_count := v_count + 1;
             v_field_names(v_count) := col_rec.column_name;
         EXCEPTION
-            WHEN NO_DATA_FOUND THEN NULL;
-            WHEN OTHERS THEN NULL; -- To handle ORA-01007
+            WHEN NO_DATA_FOUND THEN
+                NULL;
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Error while checking column ' || col_rec.column_name || ': ' || SQLERRM);
         END;
     END LOOP;
 
@@ -57,7 +59,7 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Step 2: Build dynamic SQL
+    --  Build dynamic SQL
     v_sql := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ', ' || v_field_names(i);
@@ -70,7 +72,7 @@ BEGIN
         END ||
         ' WHERE INTERFACE_FILE = :iface AND TRUNC(EFFECTIVE_DATE) = :effdate AND ACTIVE = ''A''';
 
-    -- Step 3: Parse and execute using DBMS_SQL
+    --  Parse and execute using DBMS_SQL
     v_cursor_id := DBMS_SQL.OPEN_CURSOR;
     DBMS_SQL.PARSE(v_cursor_id, v_sql, DBMS_SQL.NATIVE);
     DBMS_SQL.BIND_VARIABLE(v_cursor_id, ':iface', p_interface_file);
@@ -110,5 +112,7 @@ EXCEPTION
         IF DBMS_SQL.IS_OPEN(v_cursor_id) THEN
             DBMS_SQL.CLOSE_CURSOR(v_cursor_id);
         END IF;
+        DBMS_OUTPUT.PUT_LINE('Error in main procedure: ' || SQLERRM);
         RAISE;
 END;
+/
