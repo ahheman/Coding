@@ -1,59 +1,63 @@
-CREATE OR REPLACE PROCEDURE STAGING.dynamic_mapping_value_result (
-    p_field_to_be_derived   IN  VARCHAR2,
-    p_interface_file        IN  VARCHAR2,
-    p_effective_date        IN  DATE,
-    o_result_rows           OUT STAGING.mapping_table_type
-)
-AS
+PROCEDURE sp_getdynamicmappingvalues (
+    p_field_to_be_derived IN  VARCHAR2,
+    p_interface_file      IN  VARCHAR2,
+    p_effective_date      IN  DATE,
+    o_result_rows         OUT mapping_table_type
+) IS
     v_field_names   DBMS_SQL.VARCHAR2_TABLE;
     v_count         INTEGER := 0;
     v_sql           VARCHAR2(32767);
     v_cursor_id     INTEGER;
-    v_column_value  VARCHAR2(4000);
     v_fvm           VARCHAR2(4000);
-    col_val         VARCHAR2(4000);
+    v_column_value  VARCHAR2(4000);
     v_status        INTEGER;
     v_col_cnt       INTEGER;
 BEGIN
-    o_result_rows := STAGING.mapping_table_type();  -- initialize output
+    o_result_rows := mapping_table_type();  -- Initialize output
 
-    -- Step 1: Identify relevant field_map columns with non-null values
+    -- Step 1: Find relevant FIELD_MAP_% columns that are not null
     FOR col_rec IN (
         SELECT column_name
         FROM all_tab_columns
         WHERE owner = 'STAGING'
-          AND table_name = 'MAPPING_VALUE'
+          AND table_name = CASE UPPER(p_field_to_be_derived)
+                            WHEN 'PRODUCT_FIELD_MAPPING' THEN 'PRODUCT_FIELD_MAPPING'
+                            WHEN 'MCC_FIELD_MAPPING' THEN 'MCC_FIELD_MAPPING'
+                          END
           AND column_name LIKE 'FIELD_MAP_%'
         ORDER BY column_name
     ) LOOP
         BEGIN
             EXECUTE IMMEDIATE '
                 SELECT ' || col_rec.column_name || '
-                  FROM STAGING.MAPPING_VALUE
-                 WHERE FIELD_TO_BE_DERIVED = :1
-                   AND INTERFACE_FILE = :2
-                   AND TRUNC(EFFECTIVE_DATE) = :3
-                   AND ACTIVE = ''A''
-                   AND ' || col_rec.column_name || ' IS NOT NULL
-                   AND ROWNUM = 1'
-            INTO col_val
+                FROM STAGING.' ||
+                CASE UPPER(p_field_to_be_derived)
+                    WHEN 'PRODUCT_FIELD_MAPPING' THEN 'PRODUCT_FIELD_MAPPING'
+                    WHEN 'MCC_FIELD_MAPPING' THEN 'MCC_FIELD_MAPPING'
+                END ||
+                ' WHERE FIELD_TO_BE_DERIVED = :1
+                  AND INTERFACE_FILE = :2
+                  AND TRUNC(EFFECTIVE_DATE) = :3
+                  AND ACTIVE = ''A''
+                  AND ' || col_rec.column_name || ' IS NOT NULL
+                  AND ROWNUM = 1'
+            INTO v_column_value
             USING p_field_to_be_derived, p_interface_file, p_effective_date;
 
-            IF col_val IS NOT NULL THEN
-                v_count := v_count + 1;
-                v_field_names(v_count) := col_rec.column_name;
-            END IF;
+            v_count := v_count + 1;
+            v_field_names(v_count) := col_rec.column_name;
         EXCEPTION
             WHEN NO_DATA_FOUND THEN NULL;
-            WHEN OTHERS THEN NULL;
+            WHEN OTHERS THEN NULL; -- To handle ORA-01007
         END;
     END LOOP;
 
+    -- If no columns found, exit
     IF v_count = 0 THEN
         RETURN;
     END IF;
 
-    -- Step 2: Construct dynamic SQL
+    -- Step 2: Build dynamic SQL
     v_sql := 'SELECT FIELD_VALUE_MAPPING';
     FOR i IN 1 .. v_count LOOP
         v_sql := v_sql || ', ' || v_field_names(i);
@@ -66,16 +70,12 @@ BEGIN
         END ||
         ' WHERE INTERFACE_FILE = :iface AND TRUNC(EFFECTIVE_DATE) = :effdate AND ACTIVE = ''A''';
 
-    -- Step 3: Use DBMS_SQL for dynamic column handling
+    -- Step 3: Parse and execute using DBMS_SQL
     v_cursor_id := DBMS_SQL.OPEN_CURSOR;
-
     DBMS_SQL.PARSE(v_cursor_id, v_sql, DBMS_SQL.NATIVE);
-
-    -- Bind variables
     DBMS_SQL.BIND_VARIABLE(v_cursor_id, ':iface', p_interface_file);
     DBMS_SQL.BIND_VARIABLE(v_cursor_id, ':effdate', p_effective_date);
 
-    -- Define Columns
     DBMS_SQL.DEFINE_COLUMN(v_cursor_id, 1, v_fvm, 4000);
     FOR i IN 1 .. v_count LOOP
         DBMS_SQL.DEFINE_COLUMN(v_cursor_id, i + 1, v_column_value, 4000);
@@ -86,6 +86,7 @@ BEGIN
     WHILE DBMS_SQL.FETCH_ROWS(v_cursor_id) > 0 LOOP
         DECLARE
             temp_list SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
+            rec mapping_row_type;
         BEGIN
             DBMS_SQL.COLUMN_VALUE(v_cursor_id, 1, v_fvm);
             FOR j IN 1 .. v_count LOOP
@@ -94,11 +95,20 @@ BEGIN
                 temp_list(j) := v_column_value;
             END LOOP;
 
+            rec.field_value_mapping := v_fvm;
+            rec.field_map_values := temp_list;
+
             o_result_rows.EXTEND;
-            o_result_rows(o_result_rows.COUNT) := STAGING.mapping_row_type(v_fvm, temp_list);
+            o_result_rows(o_result_rows.COUNT) := rec;
         END;
     END LOOP;
 
     DBMS_SQL.CLOSE_CURSOR(v_cursor_id);
+
+EXCEPTION
+    WHEN OTHERS THEN
+        IF DBMS_SQL.IS_OPEN(v_cursor_id) THEN
+            DBMS_SQL.CLOSE_CURSOR(v_cursor_id);
+        END IF;
+        RAISE;
 END;
-/
